@@ -1,6 +1,7 @@
 import collections as coll
 import configparser as cp
 import enum
+import ffmpeg as ff
 import logging as log
 import optparse as op
 import os
@@ -154,16 +155,36 @@ def verify(paths: PathSet, library_to_search: plib.MovieSection) -> bool:
     return False
 
 
+def convert_codec_to_265(original_file_name: str, new_file_name: str) -> None:
+    assert original_file_name.endswith(".mp4") or original_file_name.endswith(".mkv")
+
+    print(f"Transcode {original_file_name} to {new_file_name}")
+    # use aac audio codec.
+    converter: ff.FFmpeg = (ff.FFmpeg()
+                            .input(original_file_name)
+                            .output(new_file_name, acodec="aac", vcodec="libx265")
+                            )
+    print(type(converter))
+    converter.execute()
+    sys.exit(1)
+
+
 def process(paths: PathSet, library_to_search: plib.MovieSection):
     movie_search_name: str = determine_movie_name(paths.file_names[0])
     for m in library_to_search.search(movie_search_name):
+        print(m.__dict__)
+        sys.exit(2)
         if is_correct_movie(m, paths):
             # ENCODE 265 (if necessary)
+            original_file_name: str = os.path.join(paths.current_dir, paths.file_names[0])
+            new_file_name: str = os.path.join(paths.current_dir, "test.file.mkv")
+            convert_codec_to_265(original_file_name, new_file_name)
+
             # REPLACE FILE (if encoding changed)
             # STORE GUIDS AS FILE ATTRIBUTES
             # STORE ANY CHANGED FIELDS AS FILE ATTRIBUTES
 
-            for f in m.fields:
+            for _ in m.fields:
                 # ADD TO FILE AS EXTENDED ATTRIBUTES
                 pass
             break

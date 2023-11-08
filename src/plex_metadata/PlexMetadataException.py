@@ -1,0 +1,2 @@
+class PlexMetadataException(Exception):
+    pass
