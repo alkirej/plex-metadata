@@ -1,10 +1,11 @@
 import collections as coll
 import configparser as cp
 import enum
+import http
 import logging as log
 import optparse as op
 import os
-import pathlib as pl
+import requests as req
 import shutil
 import subprocess as proc
 import sys
@@ -18,8 +19,25 @@ from plex_metadata.PlexMetadataException import PlexMetadataException
 
 _DEFAULT_SUBTITLE_CODEC = "mov_text"
 _TEMP_FILE_NAME = "temp-video.mkv"
+_COMMAND_LINE_ARGS = None
 
 PathSet = coll.namedtuple("PathSet", ["file_names", "current_dir", "local_dir", "plex_dir"])
+
+
+class CommandLineOptions(str, enum.Enum):
+    """
+    Enumeration of valid command line parameters.
+    """
+    SUB_DIR = "sub-dir"
+    LIB_SECT = "library"
+    URL = "url"
+    TOKEN = "token"
+
+
+URL_IDX = 0
+TOKEN_IDX = 1
+SUBDIR_IDX = 2
+LIBRARY_IDX = 3
 
 config: cp.ConfigParser | None = None
 if "__main__" == __name__:
@@ -58,16 +76,6 @@ def get_dirs_for(section: str, sub_dir: str) -> (list, list):
     return plex_folders, local_folders
 
 
-class CommandLineOptions(str, enum.Enum):
-    """
-    Enumeration of valid command line parameters.
-    """
-    SUB_DIR = "sub-dir"
-    LIB_SECT = "library"
-    URL = "url"
-    TOKEN = "token"
-
-
 def parse_command_line() -> dict:
     parser = op.OptionParser()
     parser.add_option("-d", "--dir",
@@ -97,8 +105,6 @@ def parse_command_line() -> dict:
 
 def connect_to_plex(url: str, token: str) -> psvr.PlexServer:
     # CONNECT TO PLEX SERVER
-    # url: str = "http://matrix.local:32400"
-    # token: str = "juJUVz7rXs3MtoyeEsBm"
     return psvr.PlexServer(url, token)
 
 
@@ -114,7 +120,6 @@ def determine_movie_name(file_name: str) -> str:
     return pmd.movie_search_name(movie_name)
 
 
-# def is_correct_movie(movie: pvid.Movie, current_dir: str, file_name: str, local_dir: str, plex_dir: str) -> bool:
 def is_correct_movie(movie: pvid.Movie, paths: PathSet) -> bool:
     compare_path = os.path.join(paths.current_dir.replace(paths.local_dir, paths.plex_dir), paths.file_names[0])
 
@@ -140,13 +145,6 @@ def is_movie_setup_correctly(m) -> bool:
         return False
 
     return True
-
-
-def count_next_movie(last_count: int) -> int:
-    new_count = last_count + 1
-    if new_count % 100 == 0:
-        log.info(f"Process movie {new_count:7,d}.")
-    return new_count
 
 
 def verify(paths: PathSet, library_to_search: plib.MovieSection) -> bool:
@@ -223,6 +221,19 @@ def needs_transcoding(found_codecs: [str], use_codecs: pmd.CodecSet) -> bool:
     return False
 
 
+def save_poster(file_name: str, location: str) -> None:
+    url = f"{_COMMAND_LINE_ARGS[URL_IDX]}{location}?X-Plex-Token={_COMMAND_LINE_ARGS[TOKEN_IDX]}"
+    response = req.get(url)
+
+    if http.HTTPStatus.OK == response.status_code:
+        data = response.content
+        log.info(f"... Saving poster information in {file_name}")
+        with open(f"{file_name}", "wb") as f:
+            f.write(data)
+    else:
+        raise PlexMetadataException(f"Invalid response from Plex web server while reading poster data. ({location})")
+
+
 def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
     # Clean up metadata
     attr_names = (attr for attr in os.listxattr(file_name) if attr.startswith("user."))
@@ -233,7 +244,7 @@ def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
     for g in movie.guids:
         guids.append(g.id)
 
-    log.info(f"guid x-attr added to {file_name}, value={guids}")
+    log.info(f"... ... adding x-attr user.guid to {file_name}, value={guids}")
     os.setxattr(file_name, "user.guid", bytes(str(guids), 'utf-8'))
 
     # Add changed values as extended file attributes (metadata)
@@ -243,7 +254,9 @@ def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
             field_val = eval(f"movie.{f.name}")
             if type(field_val) is str:
                 os.setxattr(file_name, f"user.{f.name}", bytes(field_val, "utf-8"))
-                log.info(f"Attribute user.{f.name} added to {file_name} value={field_val}")
+                log.info(f"... ... adding x-attr user.{f.name} to {file_name} value={field_val}")
+            if "thumb" == f.name:
+                save_poster(f"{file_name}.jpg", field_val)
 
 
 def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
@@ -251,6 +264,7 @@ def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
     for movie in library_to_search.search(movie_search_name):
         if is_correct_movie(movie, paths):
             original_file_name: str = os.path.join(paths.current_dir, paths.file_names[0])
+
             try:
                 codecs_in_use: [str] = pmd.all_codecs_for(original_file_name)
                 codecs_to_use: pmd.CodecSet = pmd.transcode_codecs_for(original_file_name)
@@ -276,12 +290,12 @@ def count_next(last_count: int) -> int:
 
 
 def scan_library_files(library_to_scan: plib.LibrarySection, path_to_scan: str) -> None:
-    log.info(f"Scanning library files in {path_to_scan}")
+    log.info(f"... Scanning library files in {path_to_scan}")
     library_to_scan.update(path_to_scan)
 
 
 def analyze_video(movie: pvid.Movie) -> None:
-    log.info(f"Analyze {movie.title}")
+    log.info(f"... Analyzing {movie.title}")
     # Does not seem to work, but scanning from web app does refresh things.
     movie.analyze()
 
@@ -289,10 +303,12 @@ def analyze_video(movie: pvid.Movie) -> None:
 def main():
     count = 0
 
-    url, token, sub_dir, library_name = read_command_line()
-    plex = connect_to_plex(url, token)
-    plex_dirs, local_dirs = get_dirs_for(library_name, sub_dir)
-    library_to_search: plib.MovieSection = plex.library.section(library_name)
+    plex = connect_to_plex(_COMMAND_LINE_ARGS[URL_IDX], _COMMAND_LINE_ARGS[TOKEN_IDX]
+                           )
+    plex_dirs, local_dirs = get_dirs_for(_COMMAND_LINE_ARGS[LIBRARY_IDX],
+                                         _COMMAND_LINE_ARGS[SUBDIR_IDX]
+                                         )
+    library_to_search: plib.MovieSection = plex.library.section(_COMMAND_LINE_ARGS[LIBRARY_IDX])
 
     # PROCESS EACH FOLDER FROM THE LIBRARY SECTION
     for idx, nfs_dir in enumerate(local_dirs):
@@ -301,7 +317,9 @@ def main():
         # WALK THE (nfs) DIRECTORY TREE ON LOCAL MACHINE
         for root, dirs, files in os.walk(nfs_dir):
             dirs.sort()
-            paths = PathSet(files, root, nfs_dir, plex_dir)
+            vid_files = list(filter(lambda fn: fn.endswith(".mp4") or fn.endswith(".mkv"), files))
+
+            paths = PathSet(vid_files, root, nfs_dir, plex_dir)
             if verify(paths, library_to_search):
                 count = count_next(count)
                 process(paths, library_to_search)
@@ -310,4 +328,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _COMMAND_LINE_ARGS = read_command_line()
     main()
