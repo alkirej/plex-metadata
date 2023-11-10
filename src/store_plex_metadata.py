@@ -1,10 +1,12 @@
 import collections as coll
 import configparser as cp
 import enum
-import ffmpeg as ff
 import logging as log
 import optparse as op
 import os
+import pathlib as pl
+import shutil
+import subprocess as proc
 import sys
 
 import plexapi.library as plib
@@ -12,6 +14,10 @@ import plexapi.server as psvr
 import plexapi.video as pvid
 
 import plex_metadata as pmd
+from plex_metadata.PlexMetadataException import PlexMetadataException
+
+_DEFAULT_SUBTITLE_CODEC = "mov_text"
+_TEMP_FILE_NAME = "temp-video.mkv"
 
 PathSet = coll.namedtuple("PathSet", ["file_names", "current_dir", "local_dir", "plex_dir"])
 
@@ -31,18 +37,23 @@ if "__main__" == __name__:
     config.read("setup.ini")
 
 
-def get_dirs_for(section: str) -> (dict, dict):
+def get_dirs_for(section: str, sub_dir: str) -> (list, list):
     global config
 
     log.debug(f"Lookup directories for {section}.")
     dir_count = config.getint(section, "folder-count", fallback=0)
 
-    plex_folders = []
-    local_folders = []
+    plex_folders: list = []
+    local_folders: list = []
 
     for i in range(1, 1 + dir_count):
-        plex_folders.append(config.get(section, f"plex-loc-{i:02}"))
-        local_folders.append(config.get(section, f"local-dir-{i:02}"))
+        path: str = config.get(section, f"plex-loc-{i:02}")
+        full_path: str = os.path.join(path, sub_dir)
+        plex_folders.append(full_path)
+
+        path = config.get(section, f"local-dir-{i:02}")
+        full_path = os.path.join(path, sub_dir)
+        local_folders.append(full_path)
 
     return plex_folders, local_folders
 
@@ -155,39 +166,106 @@ def verify(paths: PathSet, library_to_search: plib.MovieSection) -> bool:
     return False
 
 
-def convert_codec_to_265(original_file_name: str, new_file_name: str) -> None:
+def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet) -> None:
     assert original_file_name.endswith(".mp4") or original_file_name.endswith(".mkv")
 
-    print(f"Transcode {original_file_name} to {new_file_name}")
-    # use aac audio codec.
-    converter: ff.FFmpeg = (ff.FFmpeg()
-                            .input(original_file_name)
-                            .output(new_file_name, acodec="aac", vcodec="libx265")
-                            )
-    print(type(converter))
-    converter.execute()
-    sys.exit(1)
+    result: proc.CompletedProcess = proc.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i", original_file_name,       # input file
+            "-map", "0:v:0",                # Use 1st video stream
+            "-map", "0:a",                  # Keep all audio streams
+            "-map", "0:s?",                  # Keep all subtitles
+            "-c:s", codecs.subtitle_codec,  # subtitle codec (matches original)
+            "-c:v", codecs.video_codec,     # video codec (hevc/h.265)
+            "-c:a", codecs.audio_codec,     # audio codec (aac)
+            new_file_name                   # output file name
+        ],
+        capture_output=False,
+    )
+
+    if result.returncode != 0:
+        raise PlexMetadataException(f"An error occurred while transcoding "
+                                    + f"{original_file_name}. Return code: {result.returncode}"
+                                    )
 
 
-def process(paths: PathSet, library_to_search: plib.MovieSection):
+def transcode_to_desired_codecs(file_name: str) -> str:
+    codecs: pmd.CodecSet = pmd.transcode_codecs_for(file_name)
+    log.info(f"Transcode {file_name} using {codecs.subtitle_codec} for subs.")
+    transcode(file_name, _TEMP_FILE_NAME, codecs)
+    log.info("... Transcode complete.  Rename file.")
+    try:
+        # RENAME NEW FILE TO ORIGINAL NAME (with .mkv extension) AND DELETE ORIGINAL
+        backup_file_name: str = f"{file_name}.bak"
+        end_file_name: str = file_name.replace(".mp4", ".mkv")
+
+        shutil.move(file_name, backup_file_name)
+        shutil.move(_TEMP_FILE_NAME, end_file_name)
+        os.remove(backup_file_name)
+        log.info("... File successfully renamed.")
+
+        return end_file_name
+
+    except IOError as ioe:
+        log.critical("DISK I/O ERROR AFTER TRANSCODING COMPLETE. 2 COPIES OF THIS MOVIES MAY EXIST.")
+        log.exception(ioe)
+        sys.exit(1)
+
+
+def needs_transcoding(found_codecs: [str], use_codecs: pmd.CodecSet) -> bool:
+    for codec in found_codecs:
+        if codec in pmd.VIDEO_CODECS and codec != use_codecs.video_codec:
+            return True
+        if codec in pmd.AUDIO_CODECS and codec != use_codecs.audio_codec:
+            return True
+    return False
+
+
+def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
+    # Clean up metadata
+    attr_names = (attr for attr in os.listxattr(file_name) if attr.startswith("user."))
+    for name in attr_names:
+        os.removexattr(file_name, name)
+
+    guids: list = [movie.guid]
+    for g in movie.guids:
+        guids.append(g.id)
+
+    log.info(f"guid x-attr added to {file_name}, value={guids}")
+    os.setxattr(file_name, "user.guid", bytes(str(guids), 'utf-8'))
+
+    # Add changed values as extended file attributes (metadata)
+    if len(movie.fields) > 0:
+        for f in movie.fields:
+            # ADD TO FILE AS EXTENDED ATTRIBUTES
+            field_val = eval(f"movie.{f.name}")
+            if type(field_val) is str:
+                os.setxattr(file_name, f"user.{f.name}", bytes(field_val, "utf-8"))
+                log.info(f"Attribute user.{f.name} added to {file_name} value={field_val}")
+
+
+def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
     movie_search_name: str = determine_movie_name(paths.file_names[0])
-    for m in library_to_search.search(movie_search_name):
-        print(m.__dict__)
-        sys.exit(2)
-        if is_correct_movie(m, paths):
-            # ENCODE 265 (if necessary)
+    for movie in library_to_search.search(movie_search_name):
+        if is_correct_movie(movie, paths):
             original_file_name: str = os.path.join(paths.current_dir, paths.file_names[0])
-            new_file_name: str = os.path.join(paths.current_dir, "test.file.mkv")
-            convert_codec_to_265(original_file_name, new_file_name)
+            try:
+                codecs_in_use: [str] = pmd.all_codecs_for(original_file_name)
+                codecs_to_use: pmd.CodecSet = pmd.transcode_codecs_for(original_file_name)
 
-            # REPLACE FILE (if encoding changed)
-            # STORE GUIDS AS FILE ATTRIBUTES
-            # STORE ANY CHANGED FIELDS AS FILE ATTRIBUTES
+                if needs_transcoding(codecs_in_use, codecs_to_use):
+                    new_file_name = transcode_to_desired_codecs(original_file_name)
+                    scan_library_files(library_to_search, paths.current_dir)
+                    analyze_video(movie)
+                    add_metadata_to_file(new_file_name, movie)
+                else:
+                    log.info(f"No conversion required for {original_file_name}")
 
-            for _ in m.fields:
-                # ADD TO FILE AS EXTENDED ATTRIBUTES
-                pass
-            break
+            except PlexMetadataException as e:
+                log.error(f"{e} ({original_file_name})")
+                log.exception(e)
 
 
 def count_next(last_count: int) -> int:
@@ -197,28 +275,36 @@ def count_next(last_count: int) -> int:
     return new_count
 
 
+def scan_library_files(library_to_scan: plib.LibrarySection, path_to_scan: str) -> None:
+    log.info(f"Scanning library files in {path_to_scan}")
+    library_to_scan.update(path_to_scan)
+
+
+def analyze_video(movie: pvid.Movie) -> None:
+    log.info(f"Analyze {movie.title}")
+    # Does not seem to work, but scanning from web app does refresh things.
+    movie.analyze()
+
+
 def main():
     count = 0
 
     url, token, sub_dir, library_name = read_command_line()
     plex = connect_to_plex(url, token)
-    plex_dirs, local_dirs = get_dirs_for(library_name)
+    plex_dirs, local_dirs = get_dirs_for(library_name, sub_dir)
     library_to_search: plib.MovieSection = plex.library.section(library_name)
 
     # PROCESS EACH FOLDER FROM THE LIBRARY SECTION
     for idx, nfs_dir in enumerate(local_dirs):
         # GET A LOCAL DIRECTORY AND MATCHING PLEX DIRECTORY.
-        start_dir = os.path.join(nfs_dir, sub_dir)
         plex_dir = plex_dirs[idx]
-
         # WALK THE (nfs) DIRECTORY TREE ON LOCAL MACHINE
-        for root, _, files in os.walk(start_dir):
+        for root, dirs, files in os.walk(nfs_dir):
+            dirs.sort()
             paths = PathSet(files, root, nfs_dir, plex_dir)
             if verify(paths, library_to_search):
                 count = count_next(count)
                 process(paths, library_to_search)
-                if count == 555:
-                    sys.exit()
 
     log.info(f"Processed a total of {count} movies.  See this log for details.")
 

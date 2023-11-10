@@ -1,11 +1,24 @@
+import collections as coll
 import subprocess as proc
 
 from .movie_name_lookup import MOVIE_KEYS, SPECIAL_MOVIE_NAMES
 from .PlexMetadataException import PlexMetadataException
 
-_VIDEO_CODECS = ["h264", "hevc"]
-_AUDIO_CODECS = ["aac", "ac3", "vorbis"]
-_CODECS_TO_IGNORE = [""]
+VIDEO_CODECS = ["h264", "hevc", "mpeg2video", "mpeg4", "vc1"]
+AUDIO_CODECS = ["aac", "ac3", "dts", "mp3", "vorbis"]
+
+_PIXEL_SUBTITLE_CODECS = ["dvd_subtitle", "hdmv_pgs_subtitle", "dvb_subtitle", "vobsub"]
+_TEXT_SUBTITLE_CODECS = ["mov_text"]
+
+_CODECS_TO_IGNORE = ["", "bin_data", "png"]
+
+DESIRED_VIDEO_CODEC = "hevc"
+DESIRED_AUDIO_CODEC = "ac3"
+DESIRED_PIXEL_SUBTITLE_CODEC = "dvbsub"
+DESIRED_TEXT_SUBTITLE_CODEC = "srt"
+LEAVE_SUBTITLES_ALONE = "copy"
+
+CodecSet = coll.namedtuple("CodecSet", ["audio_codec", "video_codec", "subtitle_codec"])
 
 
 def movie_search_name(movie_name: str):
@@ -15,7 +28,31 @@ def movie_search_name(movie_name: str):
     return movie_name
 
 
-def audio_visual_codecs_for(file_name: str) -> (str, str):
+def video_codec_to_use(all_codecs: [str]) -> str:
+    return DESIRED_VIDEO_CODEC
+
+
+def audio_codec_to_use(all_codecs: [str]) -> str:
+    return DESIRED_AUDIO_CODEC
+
+
+def subtitle_codec_to_use(all_codecs: [str]) -> str:
+    pixel_st: bool = False
+    text_st: bool = False
+    for codec in all_codecs:
+        if codec in _PIXEL_SUBTITLE_CODECS:
+            pixel_st = True
+        elif codec in _TEXT_SUBTITLE_CODECS:
+            text_st = True
+
+    if pixel_st and text_st:
+        return LEAVE_SUBTITLES_ALONE
+    if pixel_st:
+        return DESIRED_PIXEL_SUBTITLE_CODEC
+    return DESIRED_TEXT_SUBTITLE_CODEC
+
+
+def all_codecs_for(file_name: str) -> [str]:
     result: proc.CompletedProcess = proc.run(
         [
             "ffprobe",
@@ -29,20 +66,19 @@ def audio_visual_codecs_for(file_name: str) -> (str, str):
     )
 
     if result.returncode != 0:
-        raise PlexMetadataException(f"An error occurred while probing {file_name}")
+        raise PlexMetadataException(f"An error occurred while probing {file_name}. Return code: {result.returncode}")
 
-    audio_codec: str | None = None
-    video_codec: str | None = None
+    return_val: [str] = []
 
     for codec in str(result.stdout, 'UTF-8').split("\n"):
-        if codec in _AUDIO_CODECS:
-            audio_codec = codec
-        elif codec in _VIDEO_CODECS:
-            video_codec = codec
-        elif codec in _CODECS_TO_IGNORE:
-            pass
-        else:
-            raise PlexMetadataException(f"Unknown codec: {codec}")
+        return_val.append(codec)
+
+    return return_val
 
 
-    return audio_codec, video_codec
+def transcode_codecs_for(file_name: str) -> CodecSet:
+    codecs: [str] = all_codecs_for(file_name)
+    return CodecSet(audio_codec_to_use(codecs),
+                    video_codec_to_use(codecs),
+                    subtitle_codec_to_use(codecs)
+                    )
