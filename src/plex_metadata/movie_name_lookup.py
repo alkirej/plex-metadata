@@ -8,6 +8,7 @@ SPECIAL_MOVIE_NAMES = {
         "Bad Boys 2": "Bad Boys II",
         "Brooklyns Finest": "Brooklyn's Finest",
         "Cowboys And Aliens": "Cowboys & Aliens",
+        "Cradle to the Grave": "Cradle 2 the Grave",
         "Die Hard 2 Die Harder": "Die Hard 2",
         "Golden Killah": "Golden Mask",
         "Highlander End Game": "Highlander: Endgame",

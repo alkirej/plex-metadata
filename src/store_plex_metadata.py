@@ -32,12 +32,14 @@ class CommandLineOptions(str, enum.Enum):
     LIB_SECT = "library"
     URL = "url"
     TOKEN = "token"
+    ALWAYS = "always_process"
 
 
 URL_IDX = 0
 TOKEN_IDX = 1
 SUBDIR_IDX = 2
 LIBRARY_IDX = 3
+ALWAYS_IDX = 4
 
 config: cp.ConfigParser | None = None
 if "__main__" == __name__:
@@ -98,6 +100,12 @@ def parse_command_line() -> dict:
                       default="",
                       help="Default connect token."
                       )
+    parser.add_option("-a", "--always",
+                      dest=CommandLineOptions.ALWAYS,
+                      action="store_true",
+                      default=False,
+                      help="Process item(s) even when not transcoded."
+                      )
     options, _ = parser.parse_args()
 
     return vars(options)
@@ -135,8 +143,9 @@ def read_command_line() -> (str, str, str, str):
     library_name = cl_opts[CommandLineOptions.LIB_SECT]
     url = cl_opts[CommandLineOptions.URL]
     token = cl_opts[CommandLineOptions.TOKEN]
+    always = cl_opts[CommandLineOptions.ALWAYS]
 
-    return url, token, sub_dir, library_name
+    return url, token, sub_dir, library_name, always
 
 
 def is_movie_setup_correctly(m) -> bool:
@@ -214,9 +223,13 @@ def transcode_to_desired_codecs(file_name: str) -> str:
 
 def needs_transcoding(found_codecs: [str], use_codecs: pmd.CodecSet) -> bool:
     for codec in found_codecs:
-        if codec in pmd.VIDEO_CODECS and codec != use_codecs.video_codec:
+        if codec in pmd.VIDEO_CODECS \
+                and use_codecs.video_codec != pmd.LEAVE_CODEC_ALONE \
+                and codec != use_codecs.video_codec:
             return True
-        if codec in pmd.AUDIO_CODECS and codec != use_codecs.audio_codec:
+        if codec in pmd.AUDIO_CODECS \
+                and use_codecs.audio_codec != pmd.LEAVE_CODEC_ALONE \
+                and codec != use_codecs.audio_codec:
             return True
     return False
 
@@ -235,7 +248,7 @@ def save_poster(file_name: str, location: str) -> None:
 
 
 def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
-    # Clean up metadata
+    # Clean up (remove) any existing metadata
     attr_names = (attr for attr in os.listxattr(file_name) if attr.startswith("user."))
     for name in attr_names:
         os.removexattr(file_name, name)
@@ -251,10 +264,15 @@ def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
     if len(movie.fields) > 0:
         for f in movie.fields:
             # ADD TO FILE AS EXTENDED ATTRIBUTES
-            field_val = eval(f"movie.{f.name}")
-            if type(field_val) is str:
-                os.setxattr(file_name, f"user.{f.name}", bytes(field_val, "utf-8"))
-                log.info(f"... ... adding x-attr user.{f.name} to {file_name} value={field_val}")
+            if "collection" == f.name:
+                field_name: str = "collections"
+                colls: list = eval("movie.collections")
+                field_val: str = str([c.tag for c in colls])
+            else:
+                field_name: str = f.name
+                field_val:str = str(eval(f"movie.{f.name}"))
+            log.info(f"... ... adding x-attr user.{field_name} to {file_name} value={field_val}")
+            os.setxattr(file_name, f"user.{field_name}", bytes(field_val, "utf-8"))
             if "thumb" == f.name:
                 save_poster(f"{file_name}.jpg", field_val)
 
@@ -272,10 +290,12 @@ def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
                 if needs_transcoding(codecs_in_use, codecs_to_use):
                     new_file_name = transcode_to_desired_codecs(original_file_name)
                     scan_library_files(library_to_search, paths.current_dir)
-                    analyze_video(movie)
                     add_metadata_to_file(new_file_name, movie)
+                    analyze_video(movie)
                 else:
                     log.info(f"No conversion required for {original_file_name}")
+                    if _COMMAND_LINE_ARGS[ALWAYS_IDX]:
+                        add_metadata_to_file(original_file_name, movie)
 
             except PlexMetadataException as e:
                 log.error(f"{e} ({original_file_name})")
@@ -291,6 +311,7 @@ def count_next(last_count: int) -> int:
 
 def scan_library_files(library_to_scan: plib.LibrarySection, path_to_scan: str) -> None:
     log.info(f"... Scanning library files in {path_to_scan}")
+    library_to_scan.update()
     library_to_scan.update(path_to_scan)
 
 

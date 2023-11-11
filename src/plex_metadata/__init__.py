@@ -16,7 +16,7 @@ DESIRED_VIDEO_CODEC = "hevc"
 DESIRED_AUDIO_CODEC = "ac3"
 DESIRED_PIXEL_SUBTITLE_CODEC = "dvbsub"
 DESIRED_TEXT_SUBTITLE_CODEC = "srt"
-LEAVE_SUBTITLES_ALONE = "copy"
+LEAVE_CODEC_ALONE = "copy"
 
 CodecSet = coll.namedtuple("CodecSet", ["audio_codec", "video_codec", "subtitle_codec"])
 
@@ -29,11 +29,19 @@ def movie_search_name(movie_name: str):
 
 
 def video_codec_to_use(all_codecs: [str]) -> str:
-    return DESIRED_VIDEO_CODEC
+    for codec in all_codecs:
+        if codec != DESIRED_VIDEO_CODEC and codec in VIDEO_CODECS:
+            return DESIRED_VIDEO_CODEC
+
+    return LEAVE_CODEC_ALONE
 
 
 def audio_codec_to_use(all_codecs: [str]) -> str:
-    return DESIRED_AUDIO_CODEC
+    for codec in all_codecs:
+        if codec != DESIRED_AUDIO_CODEC and codec in AUDIO_CODECS:
+            return DESIRED_AUDIO_CODEC
+
+    return LEAVE_CODEC_ALONE
 
 
 def subtitle_codec_to_use(all_codecs: [str]) -> str:
@@ -45,10 +53,9 @@ def subtitle_codec_to_use(all_codecs: [str]) -> str:
         elif codec in _TEXT_SUBTITLE_CODECS:
             text_st = True
 
-    if pixel_st and text_st:
-        return LEAVE_SUBTITLES_ALONE
     if pixel_st:
-        return DESIRED_PIXEL_SUBTITLE_CODEC
+        return LEAVE_CODEC_ALONE
+
     return DESIRED_TEXT_SUBTITLE_CODEC
 
 
