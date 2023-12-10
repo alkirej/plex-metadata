@@ -180,6 +180,7 @@ def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet)
         [
             "ffmpeg",
             "-y",
+            "-threads", "4",
             "-i", original_file_name,       # input file
             "-map", "0:v:0",                # Use 1st video stream
             "-map", "0:a",                  # Keep all audio streams
@@ -187,6 +188,7 @@ def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet)
             "-c:s", codecs.subtitle_codec,  # subtitle codec (matches original)
             "-c:v", codecs.video_codec,     # video codec (hevc/h.265)
             "-c:a", codecs.audio_codec,     # audio codec (aac)
+            "-threads", "4",
             new_file_name                   # output file name
         ],
         capture_output=False,
@@ -270,11 +272,11 @@ def add_metadata_to_file(file_name: str, movie: pvid.Movie) -> None:
                 field_val: str = str([c.tag for c in colls])
             else:
                 field_name: str = f.name
-                field_val:str = str(eval(f"movie.{f.name}"))
+                field_val: str = str(eval(f"movie.{f.name}"))
             log.info(f"... ... adding x-attr user.{field_name} to {file_name} value={field_val}")
             os.setxattr(file_name, f"user.{field_name}", bytes(field_val, "utf-8"))
             if "thumb" == f.name:
-                save_poster(f"{file_name}.jpg", field_val)
+                save_poster(f"{file_name}.poster", field_val)
 
 
 def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:

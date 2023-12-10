@@ -61,7 +61,7 @@ SPECIAL_MOVIE_NAMES = {
         "Lady and the Tramp II Scamps Adventure": "Lady and the Tramp II: Scamp's Adventure",
         "Lion King 2 Simbas Pride": "Lion King II: Simba's Pride",
         "Oliver and Company": "Oliver & Company",
-        "Peter Pan in Return to Neverland": "Peter Pan 2: Return to Never Land",
+        "Peter Pan in Return to Neverland": "Return to Neverland",
         "Petes Dragon": "Pete's Dragon",
         "Planes Fire and Rescue": "Planes: Fire & Rescue",
         "Pocahontas II": "Pocahontas 2",
@@ -94,8 +94,8 @@ SPECIAL_MOVIE_NAMES = {
         "Magdalana Released from Shame": "Magdalena: Released from Shame",
         "The Omega Code 2 Megiddo": "Megiddo: The Omega Code 2",
         "Pamelas Prayer": "Pamela's Prayer",
+        "Resurrection Trial": "The Prosecutor",
         "Sight and Sound Theatre Jesus": "Jesus",
-        "Sight and Sound Theatre Jonah": "Jonah the Musical",
         "Sight and Sound Theatre Samson": "Samson",
         "Sight and Sount Theatre Ruth": "Sight and Sound Theatre Ruth",
 
@@ -163,6 +163,7 @@ SPECIAL_MOVIE_NAMES = {
 
         # PUBLIC(-ALPHA)  DRAMA
         "A Sensative Passionate Man": "A Sensitive, Passionate Man",
+        "Cheaters Putting the System to the Test": "Cheaters",
         "Divine Secrets of the Ya Ya Sisterhood": "Divine Secrets of the Ya-Ya Sisterhood",
         "Me and You Us Forever": "Me & You, Us, Forever",
         "North County": "North Country",
@@ -450,6 +451,8 @@ SPECIAL_MOVIE_NAMES = {
         "African Screams": "Africa Screams",
         "Airplane II_ The Sequel": "Airplane II: The Sequel",
         "Alan and Naomi": "Alan Naomi",
+        "Alien 3": "Alien³",
+        "Alita_ Battle Angel": "Alita: Battle Angel",
         "Avengers Grimm_ Time Wars": "Avengers Grimm: Time Wars",
         "Bar Z Bad Men": "Bar-Z Bad Men",
         "Because of Winn Dixie": "Because of Winn-Dixie",
@@ -487,7 +490,7 @@ SPECIAL_MOVIE_NAMES = {
         "Justice Society_ World War II": "Justice Society: World War II",
         "KPax": "K-Pax",
         "Karen Kingsbury's The Bridge Part 2": "The Bridge Part 2",
-        "Land Before Time 11 Invasion of the Tinysauruses": "Land Before Time XI Invasion of the Tinysauruses",
+        "Land Before Time 11 Invasion o0f the Tinysauruses": "Land Before Time XI Invasion of the Tinysauruses",
         "Lara Croft Tomb Raider_ The Cradle of Life": "Lara Croft: Tomb Raider - The Cradle of Life",
         "Leap Frog Talking Words Factory": "Talking Words Factory",
         "Lego The Phantom Padawan": "Lego Padawan Menace",
@@ -558,6 +561,10 @@ SPECIAL_MOVIE_NAMES = {
         "Wallace & Gromit_ The Curse of the Were-Rabbit": "The Curse of the Were-Rabbit",
         "Where the Red Fern Grows II": "Where the Red Fern Grows: Part Two",
         "Winnie the Pooh and Christmas Too": "Winnie the Pooh & Christmas Too",
-         }
+
+        # OTHER
+        "Bridal Bootcamp": "Bridal Boot Camp",
+        "Second Hand Lions": "Secondhand Lions",
+}
 
 MOVIE_KEYS = SPECIAL_MOVIE_NAMES.keys()
