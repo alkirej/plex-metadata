@@ -9,7 +9,9 @@ import requests as req
 import shutil
 import subprocess as proc
 import sys
+import time
 
+import plexapi.exceptions as pexc
 import plexapi.library as plib
 import plexapi.server as psvr
 import plexapi.video as pvid
@@ -22,6 +24,9 @@ _TEMP_FILE_NAME = "temp-video.mkv"
 _COMMAND_LINE_ARGS = None
 
 PathSet = coll.namedtuple("PathSet", ["file_names", "current_dir", "local_dir", "plex_dir"])
+
+# FFMPEG_PROC_NAME = "ffmpeg"  # NORMALLY THIS
+FFMPEG_PROC_NAME = "ffmpeg-local-copy"  # this is a link to allow cpulimit on multiple ffmpegs
 
 
 class CommandLineOptions(str, enum.Enum):
@@ -178,9 +183,9 @@ def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet)
 
     result: proc.CompletedProcess = proc.run(
         [
-            "ffmpeg",
+            FFMPEG_PROC_NAME,
             "-y",
-            "-threads", "4",
+            "-threads", "0",
             "-i", original_file_name,       # input file
             "-map", "0:v:0",                # Use 1st video stream
             "-map", "0:a",                  # Keep all audio streams
@@ -188,7 +193,7 @@ def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet)
             "-c:s", codecs.subtitle_codec,  # subtitle codec (matches original)
             "-c:v", codecs.video_codec,     # video codec (hevc/h.265)
             "-c:a", codecs.audio_codec,     # audio codec (aac)
-            "-threads", "4",
+            "-threads", "0",
             new_file_name                   # output file name
         ],
         capture_output=False,
@@ -200,10 +205,16 @@ def transcode(original_file_name: str, new_file_name: str, codecs: pmd.CodecSet)
                                     )
 
 
-def transcode_to_desired_codecs(file_name: str) -> str:
+def transcode_to_desired_codecs(file_name: str) -> str | None:
     codecs: pmd.CodecSet = pmd.transcode_codecs_for(file_name)
     log.info(f"Transcode {file_name} using {codecs.subtitle_codec} for subs.")
-    transcode(file_name, _TEMP_FILE_NAME, codecs)
+    try:
+        transcode(file_name, _TEMP_FILE_NAME, codecs)
+    except PlexMetadataException as pme:
+        log.error(f"Exception transcoding video file. Transcode will need to be repeated.")
+        log.exception(pme)
+        return None
+
     log.info("... Transcode complete.  Rename file.")
     try:
         # RENAME NEW FILE TO ORIGINAL NAME (with .mkv extension) AND DELETE ORIGINAL
@@ -291,9 +302,10 @@ def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
 
                 if needs_transcoding(codecs_in_use, codecs_to_use):
                     new_file_name = transcode_to_desired_codecs(original_file_name)
-                    scan_library_files(library_to_search, paths.current_dir)
-                    add_metadata_to_file(new_file_name, movie)
-                    analyze_video(movie)
+                    if new_file_name is not None:
+                        scan_library_files(library_to_search, paths.current_dir)
+                        add_metadata_to_file(new_file_name, movie)
+                        analyze_video(movie)
                 else:
                     log.info(f"No conversion required for {original_file_name}")
                     if _COMMAND_LINE_ARGS[ALWAYS_IDX]:
@@ -302,6 +314,7 @@ def process(paths: PathSet, library_to_search: plib.MovieSection) -> None:
             except PlexMetadataException as e:
                 log.error(f"{e} ({original_file_name})")
                 log.exception(e)
+                raise e
 
 
 def count_next(last_count: int) -> int:
@@ -313,14 +326,30 @@ def count_next(last_count: int) -> int:
 
 def scan_library_files(library_to_scan: plib.LibrarySection, path_to_scan: str) -> None:
     log.info(f"... Scanning library files in {path_to_scan}")
-    library_to_scan.update()
-    library_to_scan.update(path_to_scan)
+    retries = 0
+    success = False
+    while not success:
+        try:
+            library_to_scan.update()
+            library_to_scan.update(path_to_scan)
+            success = True
 
+        except req.exceptions.Timeout as toe:
+            log.warning(f"Request timeout scanning for {path_to_scan}.")
+            retries += 1
+            if retries > 2:
+                raise PlexMetadataException(toe)
+            time.sleep(retries)
 
 def analyze_video(movie: pvid.Movie) -> None:
     log.info(f"... Analyzing {movie.title}")
-    # Does not seem to work, but scanning from web app does refresh things.
-    movie.analyze()
+    try:
+        # Does not seem to work, but scanning from web app does refresh things.
+        movie.analyze()
+
+    except pexc.NotFound as nfe:
+        log.warning(f"Error received analyzing movie. {nfe}")
+        log.exception(nfe)
 
 
 def main():
@@ -345,7 +374,10 @@ def main():
             paths = PathSet(vid_files, root, nfs_dir, plex_dir)
             if verify(paths, library_to_search):
                 count = count_next(count)
-                process(paths, library_to_search)
+                try:
+                    process(paths, library_to_search)
+                except PlexMetadataException as pme:
+                    log.info(f"Received PlexMetadataException ({pme}). Skipping to next.")
 
     log.info(f"Processed a total of {count} movies.  See this log for details.")
 

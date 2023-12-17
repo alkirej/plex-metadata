@@ -4,7 +4,7 @@ import subprocess as proc
 from .movie_name_lookup import MOVIE_KEYS, SPECIAL_MOVIE_NAMES
 from .PlexMetadataException import PlexMetadataException
 
-VIDEO_CODECS = ["h264", "hevc", "mpeg2video", "mpeg4", "vc1"]
+VIDEO_CODECS = ["h264", "hevc", "libx265", "mpeg2video", "mpeg4", "vc1"]
 AUDIO_CODECS = ["aac", "ac3", "dts", "mp3", "vorbis"]
 
 _PIXEL_SUBTITLE_CODECS = ["dvd_subtitle", "hdmv_pgs_subtitle", "dvb_subtitle", "vobsub"]
@@ -13,6 +13,7 @@ _TEXT_SUBTITLE_CODECS = ["mov_text"]
 _CODECS_TO_IGNORE = ["", "bin_data", "png"]
 
 DESIRED_VIDEO_CODEC = "hevc"
+DESIRED_VIDEO_CODEC_LIBRARY = "libx265"
 DESIRED_AUDIO_CODEC = "ac3"
 DESIRED_PIXEL_SUBTITLE_CODEC = "dvbsub"
 DESIRED_TEXT_SUBTITLE_CODEC = "srt"
@@ -30,8 +31,8 @@ def movie_search_name(movie_name: str):
 
 def video_codec_to_use(all_codecs: [str]) -> str:
     for codec in all_codecs:
-        if codec != DESIRED_VIDEO_CODEC and codec in VIDEO_CODECS:
-            return DESIRED_VIDEO_CODEC
+        if codec != DESIRED_VIDEO_CODEC and codec != DESIRED_VIDEO_CODEC_LIBRARY and codec in VIDEO_CODECS:
+            return DESIRED_VIDEO_CODEC_LIBRARY
 
     return LEAVE_CODEC_ALONE
 
@@ -46,12 +47,9 @@ def audio_codec_to_use(all_codecs: [str]) -> str:
 
 def subtitle_codec_to_use(all_codecs: [str]) -> str:
     pixel_st: bool = False
-    text_st: bool = False
     for codec in all_codecs:
         if codec in _PIXEL_SUBTITLE_CODECS:
             pixel_st = True
-        elif codec in _TEXT_SUBTITLE_CODECS:
-            text_st = True
 
     if pixel_st:
         return LEAVE_CODEC_ALONE
